@@ -16,18 +16,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $hanhDong = $_POST['hanh_dong'] ?? '';
 
-    if ($hanhDong === 'xoa') {
+    // Xử lý ẨN sách (Soft Delete - Cập nhật trangThai = 0)
+    if ($hanhDong === 'an') {
         $ma = (int)($_POST['maSach'] ?? 0);
-        try {
-            $stmt = $conn->prepare("DELETE FROM sach WHERE maSach = ?");
-            $stmt->bind_param('i', $ma);
-            $stmt->execute();
-        } catch (mysqli_sql_exception $ex) {
-            $stmt = $conn->prepare("UPDATE sach SET trangThai = 0 WHERE maSach = ?");
-            $stmt->bind_param('i', $ma);
-            $stmt->execute();
-        }
-        chuyen_huong('quan-ly-sach.php', 'Đã xử lý xóa/ẩn sách thành công.');
+        $stmt = $conn->prepare("UPDATE sach SET trangThai = 0 WHERE maSach = ?");
+        $stmt->bind_param('i', $ma);
+        $stmt->execute();
+        chuyen_huong('quan-ly-sach.php', 'Đã ẩn sách khỏi cửa hàng thành công.');
+    }
+
+    // Xử lý HIỆN LẠI sách (Cập nhật trangThai = 1)
+    if ($hanhDong === 'hien') {
+        $ma = (int)($_POST['maSach'] ?? 0);
+        $stmt = $conn->prepare("UPDATE sach SET trangThai = 1 WHERE maSach = ?");
+        $stmt->bind_param('i', $ma);
+        $stmt->execute();
+        chuyen_huong('quan-ly-sach.php', 'Đã hiển thị lại sách trên cửa hàng thành công.');
     }
 
     if ($hanhDong === 'luu') {
@@ -220,12 +224,14 @@ $dsNXBMang     = $conn->query("SELECT maNXB, tenNXB FROM nhaxuatban ORDER BY ten
 if ($che_do === 'danh-sach') {
     $q = trim($_GET['q'] ?? '');
     $locDanhMuc = (int)($_GET['maDanhMuc'] ?? 0);
+    $locTrangThai = isset($_GET['trangThai']) && $_GET['trangThai'] !== '' ? (int)$_GET['trangThai'] : -1;
     $trang = max(1, (int)($_GET['trang'] ?? 1));
     $moiTrang = 10;
 
     $dieuKien = [];
     $kieu = '';
     $tham = [];
+
     if ($q !== '') {
         $dieuKien[] = "(s.tenSach LIKE ? OR s.maSach = ?)";
         $kieu .= 'si';
@@ -237,6 +243,12 @@ if ($che_do === 'danh-sach') {
         $kieu .= 'i';
         $tham[] = $locDanhMuc;
     }
+    if ($locTrangThai !== -1) {
+        $dieuKien[] = "s.trangThai = ?";
+        $kieu .= 'i';
+        $tham[] = $locTrangThai;
+    }
+
     $where = $dieuKien ? ' WHERE ' . implode(' AND ', $dieuKien) : '';
 
     $tong = (int)truy_van($conn, "SELECT COUNT(*) FROM sach s" . $where, $kieu, $tham)->fetch_row()[0];
@@ -246,13 +258,58 @@ if ($che_do === 'danh-sach') {
                 (SELECT GROUP_CONCAT(tg.tenTacGia SEPARATOR ', ') FROM sachtacgia st JOIN tacgia tg ON tg.maTacGia = st.maTacGia WHERE st.maSach = s.maSach) AS tacGia
          FROM sach s LEFT JOIN danhmuc dm ON dm.maDanhMuc = s.maDanhMuc" . $where . "
          ORDER BY s.maSach DESC LIMIT " . $moiTrang . " OFFSET " . $offset, $kieu, $tham);
-    $thamSoLoc = array_filter(['q' => $q, 'maDanhMuc' => $locDanhMuc ?: ''], function ($v) { return $v !== '' && $v !== null; });
+    
+    $thamSoLoc = array_filter([
+        'q' => $q, 
+        'maDanhMuc' => $locDanhMuc ?: '', 
+        'trangThai' => $locTrangThai !== -1 ? $locTrangThai : ''
+    ], function ($v) { return $v !== '' && $v !== null; });
 }
 
 $trang_hien_tai = 'sach';
 $tieu_de_trang = 'Quản lý sách';
 require_once __DIR__ . '/../dung-chung/dau-trang-admin.php';
 ?>
+
+<!-- Inline CSS bổ sung khắc phục lỗi tràn khung & căn chỉnh layout -->
+<style>
+    .bo-loc-container {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .bo-loc-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .cuon-ngang {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .bang-sach {
+        width: 100%;
+        min-width: 850px;
+        border-collapse: collapse;
+    }
+    .badge-tt {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .hanh-dong-nhom {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+    }
+</style>
 
 <?php if ($che_do === 'danh-sach'): ?>
 
@@ -262,29 +319,49 @@ require_once __DIR__ . '/../dung-chung/dau-trang-admin.php';
     </div>
 
     <div class="card">
-        <form method="GET" action="quan-ly-sach.php" class="bo-loc">
-            <div class="tim">
+        <!-- Thanh lọc dữ liệu đã tối ưu Flexbox -->
+        <form method="GET" action="quan-ly-sach.php" class="bo-loc-container">
+            <div class="bo-loc-item" style="flex: 1; min-width: 200px;">
                 <label class="nhan-truong" for="q">Tìm kiếm</label>
                 <input class="o-nhap" type="search" id="q" name="q" placeholder="Tên sách hoặc mã sách" value="<?= e($q) ?>">
             </div>
-            <div>
+            <div class="bo-loc-item" style="min-width: 160px;">
                 <label class="nhan-truong" for="maDanhMuc">Danh mục</label>
                 <select class="o-chon" id="maDanhMuc" name="maDanhMuc">
-                    <option value="0">Tất cả</option>
+                    <option value="0">Tất cả danh mục</option>
                     <?php foreach ($dsDanhMucMang as $dm): ?>
                         <option value="<?= (int)$dm['maDanhMuc'] ?>" <?= $locDanhMuc === (int)$dm['maDanhMuc'] ? 'selected' : '' ?>><?= e($dm['tenDanhMuc']) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
-            <button class="nut nut-chinh" type="submit">Lọc</button>
-            <?php if ($thamSoLoc): ?><a class="nut" href="quan-ly-sach.php">Xóa lọc</a><?php endif; ?>
+            <div class="bo-loc-item" style="min-width: 140px;">
+                <label class="nhan-truong" for="trangThai">Trạng thái</label>
+                <select class="o-chon" id="trangThai" name="trangThai">
+                    <option value="" <?= $locTrangThai === -1 ? 'selected' : '' ?>>Tất cả</option>
+                    <option value="1" <?= $locTrangThai === 1 ? 'selected' : '' ?>>Đang bán</option>
+                    <option value="0" <?= $locTrangThai === 0 ? 'selected' : '' ?>>Đã ẩn</option>
+                </select>
+            </div>
+            <div class="bo-loc-item" style="flex-direction: row; gap: 8px;">
+                <button class="nut nut-chinh" type="submit">Lọc</button>
+                <?php if ($thamSoLoc): ?><a class="nut" href="quan-ly-sach.php">Xóa lọc</a><?php endif; ?>
+            </div>
         </form>
 
         <?php if ($dsSach->num_rows > 0): ?>
+            <!-- Khung cuộn ngang chống tràn màn hình -->
             <div class="cuon-ngang">
-                <table class="bang">
+                <table class="bang bang-sach">
                     <thead>
-                        <tr><th>Ảnh</th><th>Tên sách</th><th>Tác giả</th><th class="phai-so">Giá bán</th><th class="phai-so">Tồn</th><th>Trạng thái</th><th>Thao tác</th></tr>
+                        <tr>
+                            <th style="width:70px">Ảnh</th>
+                            <th>Tên sách</th>
+                            <th style="width:180px">Tác giả</th>
+                            <th class="phai-so" style="width:110px">Giá bán</th>
+                            <th class="phai-so" style="width:70px">Tồn</th>
+                            <th style="width:110px">Trạng thái</th>
+                            <th style="width:120px">Thao tác</th>
+                        </tr>
                     </thead>
                     <tbody>
                     <?php while ($s = $dsSach->fetch_assoc()): ?>
@@ -307,20 +384,32 @@ require_once __DIR__ . '/../dung-chung/dau-trang-admin.php';
                             </td>
                             <td>
                                 <?php if ((int)$s['trangThai'] === 1): ?>
-                                    <span class="nhan-tt" style="color:#0F4C45;background:#DCEFE8">Đang bán</span>
+                                    <span class="badge-tt" style="color:#0F4C45;background:#DCEFE8">Đang bán</span>
                                 <?php else: ?>
-                                    <span class="nhan-tt" style="color:#55635D;background:#EAEFEA">Đã ẩn</span>
+                                    <span class="badge-tt" style="color:#55635D;background:#EAEFEA">Đã ẩn</span>
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <div class="hanh-dong">
+                                <div class="hanh-dong-nhom">
                                     <a class="nut nut-nho" href="quan-ly-sach.php?action=sua&id=<?= (int)$s['maSach'] ?>">Sửa</a>
-                                    <form method="POST" action="quan-ly-sach.php" onsubmit="return confirm('Xóa sách này?');">
-                                        <?= csrf_field() ?>
-                                        <input type="hidden" name="hanh_dong" value="xoa">
-                                        <input type="hidden" name="maSach" value="<?= (int)$s['maSach'] ?>">
-                                        <button class="nut nut-nho nut-nguy" type="submit">Xóa</button>
-                                    </form>
+                                    
+                                    <?php if ((int)$s['trangThai'] === 1): ?>
+                                        <!-- Form ẨN sách (Soft Delete) -->
+                                        <form method="POST" action="quan-ly-sach.php" onsubmit="return confirm('Bạn có chắc muốn ẩn cuốn sách này khỏi cửa hàng?');" style="margin:0">
+                                            <?= csrf_field() ?>
+                                            <input type="hidden" name="hanh_dong" value="an">
+                                            <input type="hidden" name="maSach" value="<?= (int)$s['maSach'] ?>">
+                                            <button class="nut nut-nho" type="submit" style="color:#B93A12">Ẩn</button>
+                                        </form>
+                                    <?php else: ?>
+                                        <!-- Form HIỆN LẠI sách -->
+                                        <form method="POST" action="quan-ly-sach.php" onsubmit="return confirm('Bạn có muốn hiển thị lại cuốn sách này trên cửa hàng?');" style="margin:0">
+                                            <?= csrf_field() ?>
+                                            <input type="hidden" name="hanh_dong" value="hien">
+                                            <input type="hidden" name="maSach" value="<?= (int)$s['maSach'] ?>">
+                                            <button class="nut nut-nho" type="submit" style="color:#0F4C45">Hiện</button>
+                                        </form>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -330,7 +419,7 @@ require_once __DIR__ . '/../dung-chung/dau-trang-admin.php';
             </div>
             <?= phan_trang_html($tong, $trang, $moiTrang, $thamSoLoc) ?>
         <?php else: ?>
-            <div class="trong">Không tìm thấy cuốn sách nào.</div>
+            <div class="trong">Không tìm thấy cuốn sách nào phù hợp.</div>
         <?php endif; ?>
     </div>
 
